@@ -78,7 +78,7 @@ EMCCFLAGS := -std=c++17 -O2 -Iinclude -DSHARPVOX_FIXED_POINT_SYNTH -DSHARPVOX_SA
     -sEXPORT_ES6=1 \
     -sENVIRONMENT=web
 
-.PHONY: all cli lib tests timing-probe wasm wasm-host clean
+.PHONY: all cli lib tests timing-probe wasm wasm-host windows-dll windows-dll-x64 windows-dll-x86 clean
 
 all: cli lib
 
@@ -125,9 +125,42 @@ wasm:
 wasm-host: wasm
 	python3 -m http.server 8080 --directory platform/wasm/wwwroot
 
+# Windows DLL (MinGW-w64 g++) — flat C API (platform/windows/sharpvox_win.h) for
+# consumers that can't link the C++ class directly, e.g. ctypes-based hosts like
+# an NVDA add-on. Built statically (-static*) so the DLL doesn't depend on the
+# MinGW runtime being present on the target machine.
+# Cross-prefixed compiler names work from any shell as long as the MinGW-w64
+# x86_64/i686 toolchains are on PATH (e.g. MSYS2's mingw64/mingw32 bin dirs);
+# override WIN_CXX_X64/WIN_CXX_X86 to point at a specific compiler otherwise.
+WIN_CXX_X64  ?= x86_64-w64-mingw32-g++
+WIN_CXX_X86  ?= i686-w64-mingw32-g++
+WIN_CXXFLAGS := -std=c++17 -O2 -Iinclude -DSHARPVOX_FIXED_POINT_SYNTH -DSHARPVOX_BUILD_DLL \
+    -static -static-libgcc -static-libstdc++
+
+WIN_SRCS := $(LIB_SRCS) platform/lib/SharpVox.cpp platform/windows/sharpvox_win.cpp
+
+WIN_DIST    := platform/windows/dist
+WIN_DLL_X64 := $(WIN_DIST)/x64/sharpvox.dll
+WIN_DLL_X86 := $(WIN_DIST)/x86/sharpvox.dll
+
+windows-dll: windows-dll-x64 windows-dll-x86
+
+windows-dll-x64: $(WIN_DLL_X64)
+
+windows-dll-x86: $(WIN_DLL_X86)
+
+$(WIN_DLL_X64): $(WIN_SRCS) platform/windows/sharpvox_win.h
+	mkdir -p $(WIN_DIST)/x64
+	$(WIN_CXX_X64) $(WIN_CXXFLAGS) -shared $(WIN_SRCS) -o $@ -Wl,--out-implib,$(WIN_DIST)/x64/sharpvox.lib
+
+$(WIN_DLL_X86): $(WIN_SRCS) platform/windows/sharpvox_win.h
+	mkdir -p $(WIN_DIST)/x86
+	$(WIN_CXX_X86) $(WIN_CXXFLAGS) -shared $(WIN_SRCS) -o $@ -Wl,--out-implib,$(WIN_DIST)/x86/sharpvox.lib
+
 clean:
 	rm -f $(LIB_OBJS) $(CLI_OBJS) $(SHLIB_OBJS) $(CLI_BIN) $(SHLIB) $(ARCHIVE)
 	rm -f $(LIB_OBJS:.o=.d) $(CLI_OBJS:.o=.d) $(SHLIB_OBJS:.o=.d)
 	rm -rf $(FP_BUILD_DIR)
 	rm -f $(WASM_OUT) platform/wasm/wwwroot/js/sharpvox.wasm
 	rm -f $(TIMING_PROBE_BIN)
+	rm -rf $(WIN_DIST)
